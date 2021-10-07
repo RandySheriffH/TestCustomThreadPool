@@ -122,8 +122,11 @@ void TestAdd() {
 	ThreadPoolFoo tp_foo(4);
 	std::cout << "test custom thread pool." << std::endl;
 	Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "test"};
-	Ort::Session session{env, L"D:\\issue\\CustomThreadPool\\model\\model.onnx", Ort::SessionOptions{nullptr}};
-	session.SetThreadPool(&tp_foo);
+	Ort::SessionOptions session_options;
+	session_options.SetSessionThreadPool(&tp_foo);
+	Ort::Session session{ env, L"D:\\issue\\CustomThreadPool\\model\\model.onnx", session_options };
+	//Ort::Session session{ env, L"D:\\issue\\CustomThreadPool\\model\\model.onnx", Ort::SessionOptions{nullptr} };
+	//session.SetThreadPool(&tp_foo);
 	std::cout << "loaded" << std::endl;
 	const char* input_names[] = {"X", "Y"};
     Ort::AllocatorWithDefaultOptions allocator_info;
@@ -147,10 +150,12 @@ void TestAdd() {
 void TestPGAN() {
 	ThreadPoolFoo tp_foo(4);
 	Ort::Env env{ ORT_LOGGING_LEVEL_WARNING, "test" };
-	Ort::Session session{ env, L"D:\\issue\\PerfInvestigation\\pgan\\PGAN_NetG_model.onnx", Ort::SessionOptions{nullptr} };
-	session.SetThreadPool(&tp_foo);
+	Ort::SessionOptions session_options;
+	session_options.SetSessionThreadPool(&tp_foo);
+	Ort::Session session{ env, L"D:\\issue\\PerfInvestigation\\pgan\\PGAN_NetG_model.onnx", session_options };
+	//Ort::Session session{ env, L"D:\\issue\\PerfInvestigation\\pgan\\PGAN_NetG_model.onnx", Ort::SessionOptions{nullptr} };
+	//session.SetThreadPool(&tp_foo);
 	std::cout << "loaded" << std::endl;
-
 	const char* input_names[] = { "0" };
 	Ort::AllocatorWithDefaultOptions allocator_info;
 	constexpr int input_dim = 2*2*16*16;
@@ -177,5 +182,6 @@ void TestPGAN() {
 }
 
 int main() {
+	//TestAdd();
 	TestPGAN();
 }
