@@ -5,7 +5,12 @@
 #include <mutex>
 #include <atomic>
 #include <deque>
+#include <numeric>
 #include <functional>
+#include <chrono>
+using namespace std::chrono;
+
+#define FOR(I,L,H) for (int I = (L); I < (H); ++I)
 
 struct ThreadPoolFoo: public Ort::OrtThreadPool {
 
@@ -33,7 +38,7 @@ struct ThreadPoolFoo: public Ort::OrtThreadPool {
     }
     
     void ParallelFor(std::ptrdiff_t iterations, const std::function<void(std::ptrdiff_t from, std::ptrdiff_t to)>* func) override {
-        std::cout << "foo ParallelFor called!" << std::endl;
+        //std::cout << "foo ParallelFor called!" << std::endl;
         std::atomic<ptrdiff_t> iterator{0};
         ptrdiff_t block_size{2};
         std::vector<int> engaged;
@@ -65,7 +70,7 @@ struct ThreadPoolFoo: public Ort::OrtThreadPool {
     }
 
     int NumThreads() const override {
-        std::cout << "foo NumThreads called!" << std::endl;
+        //std::cout << "foo NumThreads called!" << std::endl;
         return threads_.size();
     }
     
@@ -92,7 +97,7 @@ struct ThreadPoolTbb : public Ort::OrtThreadPool {
     struct ParallelClass {
         ParallelClass(const Fn* fn) : fn_(fn) {}
         void operator()(tbb::blocked_range<std::ptrdiff_t>& range)const {
-            std::cout << "tbb ParallelFor called!" << std::endl;
+            // std::cout << "tbb ParallelFor called!" << std::endl;
             (*fn_)(range.begin(), range.end());
         }
         const Fn* fn_{};
@@ -151,17 +156,17 @@ void TestAdd() {
     Ort::Env env{ORT_LOGGING_LEVEL_WARNING, "test"};
     Ort::SessionOptions session_options;
     session_options.SetSessionThreadPool(&tp_instance);
-    Ort::Session session{ env, L"D:\\issue\\CustomThreadPool\\model\\model.onnx", session_options };
+    Ort::Session session{ env, L"D:\\issue\\CustomThreadPool\\model\\add.onnx", session_options };
     //Ort::Session session{ env, L"D:\\issue\\CustomThreadPool\\model\\model.onnx", Ort::SessionOptions{nullptr} };
     //session.SetThreadPool(&tp_foo);
     std::cout << "loaded" << std::endl;
-    const char* input_names[] = {"X", "Y"};
+    const char* input_names[] = {"add_X", "add_Y"};
     Ort::AllocatorWithDefaultOptions allocator_info;
     constexpr int dim = 1024;
     int32_t ints[dim];
     for (int i = 0; i < dim; ++i) ints[i] = 1;
     int64_t shape[] = {dim};
-    const char* output_names[] = {"Z"};
+    const char* output_names[] = {"add_Z"};
     Ort::Value input_tensors[] = {Ort::Value::CreateTensor<int32_t>(allocator_info.GetInfo(), ints, dim, shape, 1), 
                                   Ort::Value::CreateTensor<int32_t>(allocator_info.GetInfo(), ints, dim, shape, 1)};
     Ort::Value output_tensors[] = {Ort::Value::CreateTensor<int32_t>(allocator_info.GetInfo(), ints, dim, shape, 1)};
@@ -172,6 +177,54 @@ void TestAdd() {
     }
     std::cout << "..." << std::endl;
     std::cout << "done" << std::endl;
+}
+
+template<typename ThreadPoolType, bool TestBase = false>
+void TestConv(int warm_up = 1, int iterations = 3) {
+    Ort::Env env{ ORT_LOGGING_LEVEL_WARNING, "test" };
+
+    std::function<long long(Ort::SessionOptions)> test = [&](Ort::SessionOptions sess_options) {
+        Ort::Session session{ env, L"D:\\issue\\CustomThreadPool\\model\\conv.onnx", sess_options };
+        const char* input_names[] = { "conv_X", "conv_W" };
+        Ort::AllocatorWithDefaultOptions allocator_info;
+
+        srand(time(NULL));
+        std::vector<int64_t> x_dim = { 8, 3, 1024, 1024 };
+        int64_t x_size = std::accumulate(x_dim.begin(), x_dim.end(), 1LL, std::multiplies<int64_t>{});
+        float* x = new float[x_size];
+        FOR(i, 0, x_size) x[i] = ((float)rand()) / 10;
+
+        std::vector<int64_t> w_dim = { 1, 3, 32, 32 };
+        int64_t w_size = std::accumulate(w_dim.begin(), w_dim.end(), 1LL, std::multiplies<int64_t>{});
+        float* w = new float[w_size];
+        FOR(i, 0, w_size) w[i] = ((float)rand()) / 10;
+
+        std::vector<int64_t> y_dim = { 8, 1, 993, 993 };
+        int64_t y_size = std::accumulate(y_dim.begin(), y_dim.end(), 1LL, std::multiplies<int64_t>{});
+        float* y = new float[y_size];
+
+        Ort::Value input_tensors[] = { Ort::Value::CreateTensor<float>(allocator_info.GetInfo(), x, x_size, x_dim.data(), x_dim.size()),
+                                      Ort::Value::CreateTensor<float>(allocator_info.GetInfo(), w, w_size, w_dim.data(), w_dim.size()) };
+
+        const char* output_names[] = { "conv_Y" };
+        Ort::Value output_tensors[] = { Ort::Value::CreateTensor<float>(allocator_info.GetInfo(), y, y_size, y_dim.data(), y_dim.size()) };
+
+        FOR(i, 0, warm_up) session.Run(Ort::RunOptions{ nullptr }, input_names, input_tensors, 2, output_names, output_tensors, 1);
+        auto start = high_resolution_clock::now();
+        FOR(i, 0, iterations) session.Run(Ort::RunOptions{ nullptr }, input_names, input_tensors, 2, output_names, output_tensors, 1);
+        auto stop = high_resolution_clock::now();
+        delete[] x;
+        delete[] w;
+        delete[] y;
+        return duration_cast<milliseconds>(stop - start).count();
+    };
+
+    if (TestBase) std::cout << "base done in " << test({}) << " ms." << std::endl;
+
+    ThreadPoolType tp(6);
+    Ort::SessionOptions sess_options;
+    sess_options.SetSessionThreadPool(&tp);
+    std::cout << "variant done in " << test(std::move(sess_options)) << " ms." << std::endl;
 }
 
 void TestPGAN() {
@@ -210,6 +263,8 @@ void TestPGAN() {
 
 int main() {
     //TestAdd<ThreadPoolFoo>();
-    TestAdd<ThreadPoolTbb>();
+    //TestAdd<ThreadPoolTbb>();
     //TestPGAN();
+    TestConv<ThreadPoolTbb, false>(1, 10);
+    //TestConv<ThreadPoolFoo>();
 }
